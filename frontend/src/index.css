@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-studio-900 text-slate-100 overflow-hidden font-sans select-none;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #12151f;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3045;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b4461;
+}
+
+/* Splat Canvas full size override */
+.splat-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
