@@ -200,7 +200,7 @@ async def run_colab_cli_training(
             log_callback(f"Uploading {zip_path.name} to Colab session...")
 
         res = subprocess.run(
-            [colab_bin, "upload", "-s", session_name, str(zip_path), "capture.zip"],
+            [colab_bin, "upload", "-s", session_name, str(zip_path), "/content/capture.zip"],
             capture_output=True,
             text=True,
             timeout=300,
@@ -215,11 +215,22 @@ async def run_colab_cli_training(
             log_callback("Unpacking dataset and starting CUDA splat training on Colab...")
 
         remote_script = f"""
-import os, zipfile, subprocess, urllib.request
+import os, shutil, zipfile, subprocess, urllib.request
 
-print("Unpacking capture...")
-with zipfile.ZipFile("capture.zip", "r") as z:
-    z.extractall("dataset")
+print("Locating uploaded capture.zip...")
+archive_candidates = ["capture.zip", "/content/capture.zip", os.path.expanduser("~/capture.zip")]
+archive_path = next((os.path.abspath(p) for p in archive_candidates if os.path.isfile(p)), None)
+if archive_path is None:
+    raise FileNotFoundError("capture.zip not found; checked: " + ", ".join(archive_candidates))
+os.chdir("/content")
+if archive_path != "/content/capture.zip":
+    shutil.copy2(archive_path, "/content/capture.zip")
+dataset_path = "/content/dataset"
+shutil.rmtree(dataset_path, ignore_errors=True)
+os.makedirs(dataset_path, exist_ok=True)
+print("Unpacking", "/content/capture.zip", "to", dataset_path)
+with zipfile.ZipFile("/content/capture.zip", "r") as z:
+    z.extractall(dataset_path)
 
 print("Checking dependencies on Colab...")
 subprocess.run(["apt-get", "install", "-y", "-qq", "libvulkan1"], check=False)
@@ -231,7 +242,7 @@ subprocess.run(["tar", "-xf", "brush.tar.xz"], check=True)
 os.chmod("brush-app-x86_64-unknown-linux-gnu/brush_app", 0o755)
 
 print("Starting splat training...")
-os.makedirs("splats", exist_ok=True)
+os.makedirs("/content/splats", exist_ok=True)
 cmd = [
     "brush-app-x86_64-unknown-linux-gnu/brush_app",
     "dataset",
@@ -239,10 +250,16 @@ cmd = [
     "--max-splats", "600000",
     "--max-resolution", "1280",
     "--export-every", "{total_steps}",
-    "--export-path", "splats",
+    "--export-path", "/content/splats",
     "--export-name", "trained_splat.ply"
 ]
-subprocess.run(cmd, check=True)
+training = subprocess.run(cmd, capture_output=True, text=True)
+if training.stdout:
+    print(training.stdout, flush=True)
+if training.stderr:
+    print(training.stderr, flush=True)
+if training.returncode:
+    raise RuntimeError("Brush training failed with exit code " + str(training.returncode))
 print("Training on Colab finished successfully!")
 """
 
@@ -261,17 +278,22 @@ print("Training on Colab finished successfully!")
             stderr=asyncio.subprocess.STDOUT,
         )
 
+        remote_output = []
         while True:
             line = await proc.stdout.readline()
             if not line:
                 break
             text = line.decode("utf-8", errors="replace").strip()
-            if text and log_callback:
-                log_callback(f"[Colab T4] {text}")
+            if text:
+                remote_output.append(text)
+                del remote_output[:-40]
+                if log_callback:
+                    log_callback(f"[Colab T4] {text}")
 
         code = await proc.wait()
         if code != 0:
-            raise RuntimeError("Colab remote training execution failed.")
+            details = "\n".join(remote_output)
+            raise RuntimeError(f"Colab remote training execution failed (exit code {code}):\n{details}")
 
         # 5. Download trained splat
         if progress_callback:
@@ -280,14 +302,19 @@ print("Training on Colab finished successfully!")
         splat_out_dir.mkdir(parents=True, exist_ok=True)
         local_ply = splat_out_dir / "trained_splat.ply"
 
-        res = subprocess.run(
-            [colab_bin, "download", "-s", session_name, "splats/trained_splat.ply", str(local_ply)],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"Colab download failed: {res.stderr or res.stdout}")
+        download_errors = []
+        for remote_ply in ("splats/trained_splat.ply", "/content/splats/trained_splat.ply"):
+            res = subprocess.run(
+                [colab_bin, "download", "-s", session_name, remote_ply, str(local_ply)],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            if res.returncode == 0 and local_ply.is_file():
+                break
+            download_errors.append(f"{remote_ply}: {res.stderr or res.stdout or 'file not downloaded'}")
+        else:
+            raise RuntimeError("Colab download failed: " + " | ".join(download_errors))
 
         # Convert to .splat
         splat_path = splat_out_dir / "trained_splat.splat"
