@@ -221,6 +221,9 @@ print("Unpacking capture...")
 with zipfile.ZipFile("capture.zip", "r") as z:
     z.extractall("dataset")
 
+print("Checking dependencies on Colab...")
+subprocess.run(["apt-get", "install", "-y", "-qq", "libvulkan1"], check=False)
+
 print("Downloading Brush release for Linux x86_64...")
 brush_url = "https://github.com/ArthurBrussee/brush/releases/download/v0.3.0/brush-app-x86_64-unknown-linux-gnu.tar.xz"
 urllib.request.urlretrieve(brush_url, "brush.tar.xz")
@@ -243,7 +246,15 @@ subprocess.run(cmd, check=True)
 print("Training on Colab finished successfully!")
 """
 
-        exec_cmd = [colab_bin, "exec", "-s", session_name, remote_script]
+        temp_script_path = capture_dir / "_colab_train_job.py"
+        temp_script_path.write_text(remote_script, encoding="utf-8")
+
+        exec_cmd = [
+            colab_bin, "exec",
+            "-s", session_name,
+            "-f", str(temp_script_path),
+            "--timeout", "1800",
+        ]
         proc = await asyncio.create_subprocess_exec(
             *exec_cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -301,3 +312,6 @@ print("Training on Colab finished successfully!")
             pass
         if zip_path.exists():
             zip_path.unlink()
+        temp_script_path = capture_dir / "_colab_train_job.py"
+        if temp_script_path.exists():
+            temp_script_path.unlink()
