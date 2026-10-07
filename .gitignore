@@ -24,3 +24,4 @@ test_data/*/
 # System
 .DS_Store
 *.log
+frontend/ui-preview/

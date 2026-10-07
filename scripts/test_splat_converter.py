@@ -1,7 +1,19 @@
 import struct
 import numpy as np
+import pytest
 from pathlib import Path
 from server.splat_converter import convert_ply_to_splat
+
+
+@pytest.fixture
+def output_ply(tmp_path: Path) -> Path:
+    return tmp_path / "generated_splats.ply"
+
+
+@pytest.fixture
+def output_splat(tmp_path: Path) -> Path:
+    return tmp_path / "generated_splats.splat"
+
 
 def test_generate_and_convert_splat(output_ply: Path, output_splat: Path):
     num_splats = 5000

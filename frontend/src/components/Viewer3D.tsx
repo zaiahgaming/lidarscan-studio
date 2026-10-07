@@ -5,8 +5,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
-import { Box, Camera, Cloud, Footprints, Grid3X3, LoaderCircle, Maximize2, MousePointer2, RotateCcw, ScanLine, Sparkles, X } from 'lucide-react';
+import {
+  Box, Camera, Cloud, Footprints, Grid3X3, LoaderCircle, Maximize2,
+  MousePointer2, RotateCcw, ScanLine, Sparkles, X,
+} from 'lucide-react';
 import { Capture } from '../types';
+import { fileName } from '../lib/format';
 
 type ViewMode = 'mesh' | 'pointcloud' | 'splat';
 const choose = (files: string[]) => files.find((f) => /\.(glb|gltf|ply|obj)$/i.test(f)) ?? files[0] ?? '';
@@ -123,26 +127,26 @@ export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => 
           if (cancelled) { viewer.dispose(); return; }
           viewer.start(); camera.current = viewer.camera; controls.current = viewer.controls;
         } else {
-          const scene = new THREE.Scene(); scene.background = new THREE.Color('#111820');
+          const scene = new THREE.Scene(); scene.background = new THREE.Color('#101214');
           const cam = new THREE.PerspectiveCamera(66, Math.max(host.clientWidth, 1) / Math.max(host.clientHeight, 1), 0.01, 2000);
           const gl = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
           gl.setPixelRatio(Math.min(window.devicePixelRatio, 1.75)); gl.setSize(host.clientWidth, host.clientHeight); gl.outputColorSpace = THREE.SRGBColorSpace; gl.toneMapping = THREE.ACESFilmicToneMapping; host.appendChild(gl.domElement);
-          scene.add(new THREE.HemisphereLight(0xd6e9f6, 0x25313a, 2.1));
-          const light = new THREE.DirectionalLight(0xffefd4, 2.2); light.position.set(4, 7, 6); scene.add(light);
+          scene.add(new THREE.HemisphereLight(0xd8ece6, 0x1c2124, 2.1));
+          const light = new THREE.DirectionalLight(0xfff2dd, 2.2); light.position.set(4, 7, 6); scene.add(light);
           const orbit = new OrbitControls(cam, gl.domElement); orbit.enableDamping = true; orbit.screenSpacePanning = true;
           camera.current = cam; renderer.current = gl; controls.current = orbit;
           const path = urlFor(capture.id, file);
           if (mode === 'pointcloud') {
             const geo = await new PLYLoader().loadAsync(path), colored = Boolean(geo.getAttribute('color'));
-            model.current = new THREE.Points(geo, new THREE.PointsMaterial({ size: pointSize, sizeAttenuation: true, vertexColors: colored, color: colored ? 0xffffff : 0x74d8c5 }));
+            model.current = new THREE.Points(geo, new THREE.PointsMaterial({ size: pointSize, sizeAttenuation: true, vertexColors: colored, color: colored ? 0xffffff : 0x34e1c3 }));
           } else if (/\.(glb|gltf)$/i.test(file)) model.current = (await new GLTFLoader().loadAsync(path)).scene;
           else if (/\.obj$/i.test(file)) {
             const obj = await new OBJLoader().loadAsync(path);
-            obj.traverse((n) => { const m = n as THREE.Mesh; if (m.isMesh) m.material = new THREE.MeshStandardMaterial({ color: 0xbac8c3, roughness: 0.78 }); });
+            obj.traverse((n) => { const m = n as THREE.Mesh; if (m.isMesh) m.material = new THREE.MeshStandardMaterial({ color: 0xc2cdc9, roughness: 0.78 }); });
             model.current = obj;
           } else if (/\.ply$/i.test(file)) {
             const geo = await new PLYLoader().loadAsync(path); geo.computeVertexNormals(); const colored = Boolean(geo.getAttribute('color'));
-            const mat = geo.index ? new THREE.MeshStandardMaterial({ color: colored ? 0xffffff : 0xbac8c3, vertexColors: colored, side: THREE.DoubleSide }) : new THREE.PointsMaterial({ size: pointSize, vertexColors: colored, color: colored ? 0xffffff : 0x74d8c5 });
+            const mat = geo.index ? new THREE.MeshStandardMaterial({ color: colored ? 0xffffff : 0xc2cdc9, vertexColors: colored, side: THREE.DoubleSide }) : new THREE.PointsMaterial({ size: pointSize, vertexColors: colored, color: colored ? 0xffffff : 0x34e1c3 });
             model.current = geo.index ? new THREE.Mesh(geo, mat) : new THREE.Points(geo, mat);
           } else throw new Error('Preview supports GLB, GLTF, OBJ, and PLY files.');
           if (cancelled) return;
@@ -151,7 +155,7 @@ export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => 
             const center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()), d = Math.max(size.length(), 0.5);
             speed.current = THREE.MathUtils.clamp(d * 0.22, 0.6, 5); cam.near = Math.max(0.005, d / 10000); cam.far = Math.max(150, d * 12); cam.updateProjectionMatrix();
             cam.position.copy(center).add(new THREE.Vector3(d * 0.5, d * 0.34, d * 1.65)); orbit.target.copy(center); orbit.minDistance = d * 0.02; orbit.maxDistance = d * 20; orbit.update();
-            const helper = new THREE.GridHelper(Math.max(4, d * 2.5), 32, 0x71cfc1, 0x26363a); helper.position.y = box.min.y; helper.visible = showGrid; scene.add(helper); ground.current = helper;
+            const helper = new THREE.GridHelper(Math.max(4, d * 2.5), 32, 0x2e9d8a, 0x1d2426); helper.position.y = box.min.y; helper.visible = showGrid; scene.add(helper); ground.current = helper;
           }
           const observer = new ResizeObserver(() => { cam.aspect = Math.max(host.clientWidth, 1) / Math.max(host.clientHeight, 1); cam.updateProjectionMatrix(); gl.setSize(host.clientWidth, host.clientHeight); });
           observer.observe(host); resizeCleanup.current = () => observer.disconnect();
@@ -179,28 +183,115 @@ export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => 
     if (cam && orbit?.target) { const c = bounds.current.isEmpty() ? new THREE.Vector3(0, 1, 0) : bounds.current.getCenter(new THREE.Vector3()); const d = Math.max(bounds.current.getSize(new THREE.Vector3()).length(), 2); cam.position.copy(c).add(new THREE.Vector3(d * 0.5, d * 0.34, d * 1.65)); orbit.target.copy(c); orbit.update?.(); }
   };
 
-  if (!capture) return <div className="viewer-empty"><div className="empty-art"><ScanLine size={28} /></div><h2>Your scan workspace</h2><p>Import a LiDAR capture to inspect its mesh, point cloud, or Gaussian splat.</p></div>;
-  return <section className={'viewer-shell ' + (full ? 'viewer-fullscreen' : '')}>
-    <div className="viewer-toolbar">
-      <div className="viewer-mode-tabs" role="tablist" aria-label="Model type">
-        {([['mesh', Box, 'Mesh', capture.meshes], ['pointcloud', Cloud, 'Points', capture.pointclouds], ['splat', Sparkles, 'Splat', capture.splats]] as const).map(([key, Icon, label, list]) => <button key={key} role="tab" aria-selected={mode === key} className={'viewer-mode ' + (mode === key ? 'active' : '')} disabled={!list.length} onClick={() => { setMode(key); setSelected(choose(list)); }}><Icon size={15} /><span>{label}</span><small>{list.length}</small></button>)}
+  if (!capture) return null;
+
+  return (
+    <section className={'v3d' + (full ? ' fullscreen' : '')}>
+      <div
+        ref={stage}
+        className={'v3d-canvas' + (walkMode ? ' walking' : '')}
+        onClick={() => { if (walkMode && document.pointerLockElement !== stage.current) stage.current?.requestPointerLock?.(); }}
+        role="application"
+        aria-label="Interactive 3D model"
+      >
+        {!files.length && !loading && !error && (
+          <div className="v3d-empty">
+            <div className="welcome" style={{ border: 'none', background: 'none' }}>
+              <div className="welcome-glyph"><Camera size={26} /></div>
+              <h2 style={{ fontSize: 18 }}>No model in this view</h2>
+              <p>Choose another view, or run reconstruction from the Process tab.</p>
+            </div>
+          </div>
+        )}
+        {loading && (
+          <div className="v3d-overlay">
+            <LoaderCircle size={24} className="spin" />
+            <h3>Loading your scan</h3>
+            <p>{fileName(file)}</p>
+          </div>
+        )}
+        {error && (
+          <div className="v3d-overlay error">
+            <ScanLine size={24} />
+            <h3>Couldn’t open this model</h3>
+            <p>{error}</p>
+            <button className="btn btn-outline" onClick={(e) => { e.stopPropagation(); setRetry((n) => n + 1); }}>Try again</button>
+          </div>
+        )}
+        {!loading && !error && files.length > 0 && walkMode && (
+          <div className="v3d-walkhud" style={{ top: 60 }}>
+            <span className="live"><i /> WALK</span>
+            <span>{locked ? 'Mouse to look · WASD to move · Shift faster · Q/E rise' : 'Click to look around · WASD to move'}</span>
+            <button onClick={(e) => { e.stopPropagation(); resetView(); }}><X size={13} /> Exit</button>
+          </div>
+        )}
+        {!loading && !error && files.length > 0 && !walkMode && (
+          <div className="v3d-hint">
+            <MousePointer2 size={12} /> Drag to orbit <b>·</b> Scroll to zoom <b>·</b> Right drag to pan
+          </div>
+        )}
       </div>
-      <div className="viewer-tools">
-        {files.length > 1 && <select aria-label="Model file" value={file} onChange={(e) => setSelected(e.target.value)}>{files.map((f) => <option key={f} value={f}>{f.split('/').pop()}</option>)}</select>}
-        {mode === 'mesh' && <button className={'icon-tool ' + (wireframe ? 'selected' : '')} onClick={() => setWireframe((v) => !v)} title="Wireframe"><Grid3X3 size={16} /></button>}
-        {mode === 'pointcloud' && <label className="point-size">Size<input type="range" min="0.004" max="0.05" step="0.002" value={pointSize} onChange={(e) => setPointSize(Number(e.target.value))} /></label>}
-        <button className={'icon-tool ' + (showGrid ? 'selected' : '')} onClick={() => setShowGrid((v) => !v)} title="Ground grid"><Grid3X3 size={16} /></button>
-        <button className="icon-tool" onClick={resetView} title="Reset view"><RotateCcw size={16} /></button>
-        <button className="icon-tool" onClick={() => setFull((v) => !v)} title="Full screen">{full ? <X size={16} /> : <Maximize2 size={16} />}</button>
+
+      <div className="v3d-chrome v3d-tabs" role="tablist" aria-label="Model type">
+        {([['mesh', Box, 'Mesh', capture.meshes], ['pointcloud', Cloud, 'Points', capture.pointclouds], ['splat', Sparkles, 'Splat', capture.splats]] as const).map(([key, Icon, label, list]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={mode === key}
+            className={'v3d-tab' + (mode === key ? ' active' : '')}
+            disabled={!list.length}
+            onClick={() => { setMode(key); setSelected(choose(list)); }}
+          >
+            <Icon size={14} />
+            <span>{label}</span>
+            <small>{list.length}</small>
+          </button>
+        ))}
       </div>
-    </div>
-    <div ref={stage} className={'viewer-stage ' + (walkMode ? 'walking' : '')} onClick={() => { if (walkMode && document.pointerLockElement !== stage.current) stage.current?.requestPointerLock?.(); }} role="application" aria-label="Interactive 3D model">
-      {!files.length && !loading && <div className="viewer-message"><div className="empty-art"><Camera size={24} /></div><h3>No model in this view</h3><p>Choose another view, or run reconstruction from Process.</p></div>}
-      {loading && <div className="viewer-message"><LoaderCircle size={26} className="spin" /><h3>Loading your scan</h3><p>{file.split('/').pop()}</p></div>}
-      {error && <div className="viewer-message error-message"><div className="empty-art"><ScanLine size={24} /></div><h3>Couldn’t open this model</h3><p>{error}</p><button className="secondary-button" onClick={(e) => { e.stopPropagation(); setRetry((n) => n + 1); }}>Try again</button></div>}
-      {!loading && !error && files.length > 0 && walkMode && <div className="walk-hud"><span className="walk-live"><i /> WALK MODE</span><span>{locked ? 'Mouse to look · WASD to move · Shift faster · Q/E rise' : 'Click to look around · WASD to move'}</span><button onClick={(e) => { e.stopPropagation(); resetView(); }}><X size={14} /> Exit</button></div>}
-      {!loading && !error && files.length > 0 && !walkMode && <div className="viewer-hint"><MousePointer2 size={14} /> Drag to orbit <b>·</b> Scroll to zoom <b>·</b> Right drag to pan</div>}
-    </div>
-    <div className="viewer-caption"><div><span className="caption-dot" />{mode === 'splat' ? 'Gaussian splat' : mode === 'pointcloud' ? 'Point cloud' : '3D mesh'}<span className="caption-sep">/</span><strong>{file.split('/').pop() || 'No model'}</strong></div><button onClick={walkMode ? resetView : enterWalk} disabled={loading || !file}><Footprints size={16} />{walkMode ? 'Exit walk' : 'Walk inside'}</button></div>
-  </section>;
+
+      <div className="v3d-chrome v3d-tools">
+        {files.length > 1 && (
+          <select className="v3d-file-select" aria-label="Model file" value={file} onChange={(e) => setSelected(e.target.value)}>
+            {files.map((f) => <option key={f} value={f}>{fileName(f)}</option>)}
+          </select>
+        )}
+        {mode === 'mesh' && (
+          <button className={'v3d-tool' + (wireframe ? ' on' : '')} onClick={() => setWireframe((v) => !v)} title="Wireframe">
+            <Grid3X3 size={15} />
+          </button>
+        )}
+        {mode === 'pointcloud' && (
+          <label className="v3d-pointsize">
+            Size
+            <input type="range" min="0.004" max="0.05" step="0.002" value={pointSize} onChange={(e) => setPointSize(Number(e.target.value))} />
+          </label>
+        )}
+        <button className={'v3d-tool' + (showGrid ? ' on' : '')} onClick={() => setShowGrid((v) => !v)} title="Ground grid">
+          <Grid3X3 size={15} />
+        </button>
+        <button className="v3d-tool" onClick={resetView} title="Reset view">
+          <RotateCcw size={15} />
+        </button>
+        <button className="v3d-tool" onClick={() => setFull((v) => !v)} title={full ? 'Exit full screen' : 'Full screen'}>
+          {full ? <X size={15} /> : <Maximize2 size={15} />}
+        </button>
+      </div>
+
+      <div className="v3d-chrome v3d-bottom">
+        <div className="v3d-caption">
+          <span className="kind">{mode === 'splat' ? 'Gaussian splat' : mode === 'pointcloud' ? 'Point cloud' : '3D mesh'}</span>
+          <span className="sep">/</span>
+          <strong>{fileName(file) || 'No model'}</strong>
+        </div>
+        <button
+          className={'v3d-walkbtn' + (walkMode ? ' exit' : '')}
+          onClick={walkMode ? resetView : enterWalk}
+          disabled={loading || !file}
+        >
+          <Footprints size={14} />
+          {walkMode ? 'Exit walk' : 'Walk inside'}
+        </button>
+      </div>
+    </section>
+  );
 };

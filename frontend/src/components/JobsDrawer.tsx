@@ -1,144 +1,122 @@
-import React, { useState, useEffect } from 'react';
-import { X, Activity, CheckCircle2, AlertCircle, Clock, Terminal, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useState } from 'react';
+import { Activity, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { Job } from '../types';
+import { dateTimeLabel } from '../lib/format';
 
 interface JobsDrawerProps {
-  isOpen: boolean;
-  onClose: () => void;
+  open: boolean;
   jobs: Job[];
+  onClose: () => void;
 }
 
-export const JobsDrawer: React.FC<JobsDrawerProps> = ({ isOpen, onClose, jobs }) => {
-  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
+const STATUS_LABEL: Record<Job['status'], string> = {
+  queued: 'Queued',
+  running: 'Running',
+  completed: 'Completed',
+  failed: 'Failed',
+};
 
-  // Fetch logs when a job is expanded
-  useEffect(() => {
-    if (!expandedJobId) return;
+export const JobsDrawer: React.FC<JobsDrawerProps> = ({ open, jobs, onClose }) => {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [logs, setLogs] = useState<Record<string, string>>({});
 
-    const fetchLogs = async () => {
+  if (!open) return null;
+
+  const toggleLogs = async (job: Job) => {
+    if (expanded === job.id) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(job.id);
+    if (logs[job.id] === undefined) {
       try {
-        const res = await fetch(`/api/jobs/${expandedJobId}/logs`);
-        if (res.ok) {
-          const data = await res.json();
-          setLogs(data.logs || []);
-        }
-      } catch (err) {
-        console.error('Error fetching logs:', err);
+        const response = await fetch('/api/jobs/' + encodeURIComponent(job.id) + '/logs');
+        const payload = response.ok ? await response.json() : { logs: [] };
+        const lines = Array.isArray(payload.logs)
+          ? payload.logs.map((entry: unknown) =>
+              typeof entry === 'string' ? entry : JSON.stringify(entry),
+            )
+          : [];
+        setLogs((previous) => ({ ...previous, [job.id]: lines.join('\n') || 'No log output yet.' }));
+      } catch {
+        setLogs((previous) => ({ ...previous, [job.id]: 'Logs are unavailable right now.' }));
       }
-    };
-
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 1500);
-    return () => clearInterval(interval);
-  }, [expandedJobId]);
-
-  if (!isOpen) return null;
+    }
+  };
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-studio-800 border-l border-studio-border shadow-2xl z-40 flex flex-col select-none">
-      {/* Header */}
-      <div className="h-16 px-4 border-b border-studio-border flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <Activity className="w-4 h-4 text-cyan-400" />
-          <h2 className="text-sm font-bold text-white">Background Jobs</h2>
-          <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-studio-700 text-slate-300">
-            {jobs.length}
-          </span>
-        </div>
-        <button
-          onClick={onClose}
-          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-studio-700 transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Jobs List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-        {jobs.length === 0 ? (
-          <div className="h-48 flex flex-col items-center justify-center text-center p-4 text-slate-500">
-            <Clock className="w-8 h-8 stroke-1 mb-2 text-slate-600" />
-            <p className="text-xs font-medium">No processing jobs active</p>
+    <>
+      <div className="drawer-backdrop" onMouseDown={onClose} />
+      <aside className="drawer" role="dialog" aria-label="Processing jobs">
+        <div className="drawer-head">
+          <div>
+            <span className="microlabel">Activity</span>
+            <h2>Processing jobs</h2>
           </div>
-        ) : (
-          jobs.map((job) => {
-            const isExpanded = expandedJobId === job.id;
-            return (
-              <div
-                key={job.id}
-                className="bg-studio-750/60 border border-studio-border rounded-xl p-3 space-y-2 shadow-sm"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-100">{job.name}</h4>
-                    <p className="text-[10px] font-mono text-slate-400">{job.status_message}</p>
-                  </div>
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center space-x-1 ${
-                      job.status === 'completed'
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        : job.status === 'running'
-                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse'
-                        : job.status === 'failed'
-                        ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                        : 'bg-slate-700 text-slate-400'
-                    }`}
-                  >
-                    {job.status === 'completed' && <CheckCircle2 className="w-2.5 h-2.5" />}
-                    {job.status === 'failed' && <AlertCircle className="w-2.5 h-2.5" />}
-                    <span>{job.status}</span>
-                  </span>
-                </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close jobs">
+            <X size={16} />
+          </button>
+        </div>
 
-                {/* Progress bar */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                    <span>Progress</span>
-                    <span>{Math.round(job.progress * 100)}%</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-studio-900 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        job.status === 'completed'
-                          ? 'bg-emerald-400'
-                          : job.status === 'failed'
-                          ? 'bg-rose-500'
-                          : 'bg-gradient-to-r from-cyan-500 to-indigo-500'
-                      }`}
-                      style={{ width: `${Math.max(job.progress * 100, 5)}%` }}
-                    />
-                  </div>
-                </div>
+        <div className="drawer-body">
+          {jobs.length === 0 && (
+            <div className="drawer-empty">
+              <Activity size={22} />
+              <b>No jobs yet</b>
+              <p>Reconstruction and splat training appear here once started.</p>
+            </div>
+          )}
 
-                {/* Expand Logs button */}
-                <div className="pt-1 flex items-center justify-between border-t border-studio-border/50 text-[11px]">
-                  <button
-                    onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
-                    className="flex items-center space-x-1 text-slate-400 hover:text-cyan-400 transition-colors"
-                  >
-                    <Terminal className="w-3 h-3" />
-                    <span>{isExpanded ? 'Hide Console' : 'View Logs'}</span>
-                    {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                  </button>
-                  <span className="text-[10px] font-mono text-slate-500">ID: {job.id}</span>
-                </div>
-
-                {/* Log terminal */}
-                {isExpanded && (
-                  <div className="mt-2 p-2 rounded-lg bg-black/80 border border-studio-border text-[10px] font-mono text-slate-300 max-h-48 overflow-y-auto space-y-0.5">
-                    {logs.length === 0 ? (
-                      <p className="text-slate-600">Waiting for logs...</p>
-                    ) : (
-                      logs.map((l, i) => <div key={i} className="whitespace-pre-wrap">{l}</div>)
-                    )}
-                  </div>
-                )}
+          {jobs.slice(0, 12).map((job) => (
+            <div className="job-card" key={job.id}>
+              <div className="job-card-top">
+                <span className="job-kind">{job.type}</span>
+                <b>{job.name}</b>
+                <span className="pct">{Math.round(job.progress * 100)}%</span>
               </div>
-            );
-          })
-        )}
-      </div>
-    </div>
+              <div className="job-status">
+                <span
+                  className={'status-dot' + (job.status === 'running' ? ' pulse-dot' : '')}
+                  style={{
+                    background:
+                      job.status === 'running' ? 'var(--amber)'
+                      : job.status === 'completed' ? 'var(--accent)'
+                      : job.status === 'failed' ? 'var(--rose)'
+                      : 'var(--faint)',
+                  }}
+                />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {job.status_message || STATUS_LABEL[job.status]}
+                  {job.error ? ' — ' + job.error : ''}
+                </span>
+              </div>
+              <div className="job-track">
+                <div
+                  className={'job-fill ' + job.status}
+                  style={{ width: Math.max(job.progress * 100, job.status === 'running' ? 6 : job.status === 'failed' ? 100 : 0) + '%' }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                <span className="microlabel" style={{ letterSpacing: '0.08em' }}>
+                  {dateTimeLabel(job.started_at || job.created_at)}
+                </span>
+                <button className="job-logs-toggle" onClick={() => void toggleLogs(job)}>
+                  {expanded === job.id ? (
+                    <>
+                      <ChevronUp size={12} style={{ verticalAlign: -1 }} /> Hide logs
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown size={12} style={{ verticalAlign: -1 }} /> Logs
+                    </>
+                  )}
+                </button>
+              </div>
+              {expanded === job.id && <pre className="job-logs">{logs[job.id] ?? 'Loading…'}</pre>}
+            </div>
+          ))}
+        </div>
+      </aside>
+    </>
   );
 };
