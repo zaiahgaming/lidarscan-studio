@@ -18,6 +18,7 @@ export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => 
   const renderer = useRef<THREE.WebGLRenderer | null>(null);
   const controls = useRef<any>(null);
   const splat = useRef<any>(null);
+  const splatHost = useRef<HTMLDivElement | null>(null);
   const model = useRef<THREE.Object3D | null>(null);
   const ground = useRef<THREE.GridHelper | null>(null);
   const bounds = useRef(new THREE.Box3());
@@ -98,15 +99,25 @@ export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => 
       try { splat.current?.dispose(); } catch { /* viewer already disposed */ }
       splat.current = null; controls.current?.dispose?.(); controls.current = null;
       if (renderer.current) { renderer.current.dispose(); renderer.current.domElement.remove(); renderer.current = null; }
+      // Remove only DOM nodes this component created. Never clear the host
+      // element itself: React owns sibling overlay nodes inside it, and
+      // wiping them causes a removeChild crash that unmounts the whole app.
+      splatHost.current?.remove(); splatHost.current = null;
       model.current?.traverse((n) => { const o = n as THREE.Mesh | THREE.Points; o.geometry?.dispose(); (Array.isArray(o.material) ? o.material : [o.material]).forEach((m: any) => m?.dispose?.()); });
-      model.current = null; camera.current = null; ground.current = null; host.replaceChildren();
+      model.current = null; camera.current = null; ground.current = null;
     };
     cleanup();
     const load = async () => {
       try {
         if (mode === 'splat') {
+          // The splat library aggressively manages the DOM inside its root
+          // element. Give it a dedicated detached div so it never mutates
+          // nodes that React also controls.
+          const inner = document.createElement('div');
+          inner.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+          host.appendChild(inner); splatHost.current = inner;
           const isPly = /\.ply$/i.test(file);
-          const viewer = new GaussianSplats3D.Viewer({ rootElement: host, cameraUp: [0, 1, 0], initialCameraPosition: [0, 1.6, 3.5], initialCameraLookAt: [0, 1, 0], selfDrivenMode: true, useBuiltInControls: true, sharedMemoryForWorkers: false, ignoreDevicePixelRatio: true, halfPrecisionCovariancesOnGPU: true });
+          const viewer = new GaussianSplats3D.Viewer({ rootElement: inner, cameraUp: [0, 1, 0], initialCameraPosition: [0, 1.6, 3.5], initialCameraLookAt: [0, 1, 0], selfDrivenMode: true, useBuiltInControls: true, sharedMemoryForWorkers: false, ignoreDevicePixelRatio: true, halfPrecisionCovariancesOnGPU: true });
           splat.current = viewer;
           await viewer.addSplatScene(urlFor(capture.id, file), { format: isPly ? GaussianSplats3D.SceneFormat.Ply : GaussianSplats3D.SceneFormat.Splat, streamView: true, showLoadingUI: false });
           if (cancelled) { viewer.dispose(); return; }
