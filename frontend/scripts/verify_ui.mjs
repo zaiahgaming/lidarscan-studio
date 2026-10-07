@@ -123,6 +123,29 @@ const tabStates = await page.evaluate(() =>
 );
 check('mode tabs reflect assets', tabStates.length === 3, JSON.stringify(tabStates));
 
+// --- new app layout: private/mesh GLB must load in the viewer ---
+const newCard = page.locator('.scan-card', { hasText: 'Scan_2026' }).first();
+if ((await newCard.count()) === 1) {
+  await newCard.click();
+  await page.waitForTimeout(800);
+  const meshTab = page.locator('.v3d-tab', { hasText: 'Mesh' });
+  check('new-layout capture has Mesh tab enabled', (await meshTab.count()) === 1 && !(await meshTab.isDisabled()));
+  const pointsTab = page.locator('.v3d-tab', { hasText: 'Points' });
+  check('new-layout capture has Points tab enabled', !(await pointsTab.isDisabled()));
+  const autoSelected = await page.locator('.v3d-tab.active').innerText();
+  check('mesh view auto-selected', autoSelected.startsWith('Mesh'), autoSelected.trim());
+  await page.waitForTimeout(6000); // allow GLB fetch + parse
+  check('GLB loaded without error overlay', (await page.locator('.v3d-overlay.error').count()) === 0);
+  const canvasNodes = await page.evaluate(() => document.querySelector('.v3d-canvas')?.querySelectorAll('canvas').length ?? 0);
+  check('GLB canvas mounted', canvasNodes > 0, canvasNodes + ' canvas nodes');
+  const caption = await page.locator('.v3d-caption strong').innerText();
+  check('viewer prefers mesh.glb', caption === 'mesh.glb', caption);
+  const walkBtn = page.locator('.v3d-walkbtn');
+  check('walk button enabled', !(await walkBtn.isDisabled()));
+} else {
+  check('new-layout capture available', false, 'no Scan_2026 card in library');
+}
+
 // --- splat engine exercise (riskiest path): open the demo capture with splats ---
 const demoCard = page.locator('.scan-card', { hasText: 'Synthetic' }).first();
 if ((await demoCard.count()) === 1) {

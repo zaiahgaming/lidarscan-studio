@@ -10,6 +10,10 @@ from PIL import Image
 
 logger = logging.getLogger("lidarscan.captures")
 
+MESH_EXTENSIONS = {".glb", ".gltf", ".ply", ".obj", ".usdz"}
+SPLAT_EXTENSIONS = {".splat", ".ply", ".ksplat", ".spz"}
+
+
 class CaptureManager:
     def __init__(self, root_dir: str | Path):
         self.root_dir = Path(root_dir).resolve()
@@ -33,26 +37,50 @@ class CaptureManager:
             raise ValueError("Invalid capture ID traversal")
         return path
 
+    @staticmethod
+    def _layout_candidates(capture_dir: Path, name: str) -> List[Path]:
+        """Asset locations across app export layouts: root-level (server jobs write
+        here) and private/ (the iOS app's newer export bundle layout)."""
+        return [capture_dir / name, capture_dir / "private" / name]
+
+    def _find_asset(self, capture_dir: Path, name: str) -> Optional[Path]:
+        for candidate in self._layout_candidates(capture_dir, name):
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _collect_files(self, capture_dir: Path, dir_name: str, extensions: set) -> List[str]:
+        files: List[str] = []
+        for directory in self._layout_candidates(capture_dir, dir_name):
+            if not directory.is_dir():
+                continue
+            for f in directory.glob("*"):
+                if f.is_file() and f.suffix.lower() in extensions:
+                    rel = str(f.relative_to(capture_dir))
+                    if rel not in files:
+                        files.append(rel)
+        return files
+
     def get_capture_info(self, capture_id: str) -> Optional[Dict[str, Any]]:
         capture_dir = self.get_capture_path(capture_id)
         if not capture_dir.exists() or not capture_dir.is_dir():
             return None
 
-        # Read metadata.json if present
-        meta_file = capture_dir / "metadata.json"
+        # Read metadata.json if present (root copy or the app's private/ copy)
+        meta_file = self._find_asset(capture_dir, "metadata.json")
         meta = {}
-        if meta_file.exists():
+        if meta_file and meta_file.exists():
             try:
                 with open(meta_file, "r") as f:
                     meta = json.load(f)
             except Exception as e:
                 logger.warning(f"Error parsing metadata.json in {capture_id}: {e}")
 
-        # Check frame count from transforms.json or images dir
-        transforms_file = capture_dir / "transforms.json"
+        # Check frame count from transforms.json or images dir (either layout)
+        transforms_file = self._find_asset(capture_dir, "transforms.json")
         frames_count = meta.get("frame_count", 0)
         camera_info = {}
-        if transforms_file.exists():
+        if transforms_file and transforms_file.exists():
             try:
                 with open(transforms_file, "r") as f:
                     t_data = json.load(f)
@@ -67,13 +95,13 @@ class CaptureManager:
             except Exception:
                 pass
 
-        images_dir = capture_dir / "images"
-        if not frames_count and images_dir.exists():
+        images_dir = self._find_asset(capture_dir, "images")
+        if not frames_count and images_dir and images_dir.exists():
             frames_count = len(list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png")))
 
         # Thumbnail handling
         thumb_path = capture_dir / "thumbnail.jpg"
-        if not thumb_path.exists() and images_dir.exists():
+        if not thumb_path.exists() and images_dir and images_dir.exists():
             # Find first image to make thumbnail
             img_files = sorted(images_dir.glob("*.jpg")) or sorted(images_dir.glob("*.png"))
             if img_files:
@@ -86,28 +114,21 @@ class CaptureManager:
                     logger.warning(f"Failed to generate thumbnail for {capture_id}: {e}")
 
         # Check assets
-        has_depth = (capture_dir / "depth").exists() or meta.get("has_depth", False)
+        has_depth = any(
+            layout_dir.exists()
+            for layout_dir in self._layout_candidates(capture_dir, "depth")
+        ) or meta.get("has_depth", False)
         pointcloud_files = []
-        if (capture_dir / "pointcloud.ply").exists():
-            pointcloud_files.append("pointcloud.ply")
-        if (capture_dir / "pointcloud_cleaned.ply").exists():
-            pointcloud_files.append("pointcloud_cleaned.ply")
+        for name in ("pointcloud.ply", "pointcloud_cleaned.ply"):
+            for pointcloud_path in self._layout_candidates(capture_dir, name):
+                if pointcloud_path.exists():
+                    rel = str(pointcloud_path.relative_to(capture_dir))
+                    if rel not in pointcloud_files:
+                        pointcloud_files.append(rel)
 
-        # Meshes
-        mesh_files = []
-        mesh_dir = capture_dir / "mesh"
-        if mesh_dir.exists():
-            for m in mesh_dir.glob("*"):
-                if m.suffix.lower() in [".glb", ".gltf", ".ply", ".obj", ".usdz"]:
-                    mesh_files.append(str(m.relative_to(capture_dir)))
-
-        # Splats
-        splat_files = []
-        splat_dir = capture_dir / "splats"
-        if splat_dir.exists():
-            for s in splat_dir.glob("*"):
-                if s.suffix.lower() in [".splat", ".ply", ".ksplat", ".spz"]:
-                    splat_files.append(str(s.relative_to(capture_dir)))
+        # Meshes and splats (both export layouts)
+        mesh_files = self._collect_files(capture_dir, "mesh", MESH_EXTENSIONS)
+        splat_files = self._collect_files(capture_dir, "splats", SPLAT_EXTENSIONS)
 
         # Formatted created date
         created = meta.get("created")

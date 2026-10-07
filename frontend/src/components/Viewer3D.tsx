@@ -13,7 +13,20 @@ import { Capture } from '../types';
 import { fileName } from '../lib/format';
 
 type ViewMode = 'mesh' | 'pointcloud' | 'splat';
-const choose = (files: string[]) => files.find((f) => /\.(glb|gltf|ply|obj)$/i.test(f)) ?? files[0] ?? '';
+// Deterministic format preference so glob order never picks a worse asset
+// (e.g. mesh.obj over mesh.glb, or trained_splat.ply over trained_splat.splat).
+const FORMAT_PRIORITY: Record<ViewMode, RegExp[]> = {
+  mesh: [/\.glb$/i, /\.gltf$/i, /\.ply$/i, /\.obj$/i],
+  pointcloud: [/\.ply$/i],
+  splat: [/\.splat$/i, /\.ksplat$/i, /\.spz$/i, /\.ply$/i],
+};
+const choose = (files: string[], mode: ViewMode) => {
+  for (const pattern of FORMAT_PRIORITY[mode]) {
+    const match = files.find((f) => pattern.test(f));
+    if (match) return match;
+  }
+  return files[0] ?? '';
+};
 const urlFor = (id: string, file: string) => '/captures/' + encodeURIComponent(id) + '/' + file.split('/').map(encodeURIComponent).join('/');
 
 export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => {
@@ -45,12 +58,12 @@ export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => 
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const files = useMemo(() => !capture ? [] : mode === 'splat' ? capture.splats : mode === 'mesh' ? capture.meshes : capture.pointclouds, [capture, mode]);
-  const file = files.includes(selected) ? selected : choose(files);
+  const file = files.includes(selected) ? selected : choose(files, mode);
 
   useEffect(() => {
     if (!capture) { setMode('mesh'); setSelected(''); return; }
     const next: ViewMode = capture.has_splats && capture.splats.length ? 'splat' : capture.has_mesh && capture.meshes.length ? 'mesh' : 'pointcloud';
-    setMode(next); setSelected(choose(next === 'splat' ? capture.splats : next === 'mesh' ? capture.meshes : capture.pointclouds));
+    setMode(next); setSelected(choose(next === 'splat' ? capture.splats : next === 'mesh' ? capture.meshes : capture.pointclouds, next));
     setWalkMode(false); walking.current = false;
   }, [capture?.id]);
 
@@ -240,7 +253,7 @@ export const Viewer3D: React.FC<{ capture: Capture | null }> = ({ capture }) => 
             aria-selected={mode === key}
             className={'v3d-tab' + (mode === key ? ' active' : '')}
             disabled={!list.length}
-            onClick={() => { setMode(key); setSelected(choose(list)); }}
+            onClick={() => { setMode(key); setSelected(choose(list, key)); }}
           >
             <Icon size={14} />
             <span>{label}</span>

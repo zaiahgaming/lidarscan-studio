@@ -1,5 +1,7 @@
 import json
 import logging
+import struct
+import zlib
 from pathlib import Path
 from typing import Callable, Optional
 import numpy as np
@@ -8,6 +10,80 @@ import open3d as o3d
 import trimesh
 
 logger = logging.getLogger("lidarscan.reconstruction")
+
+
+def _find_transforms(capture_dir: Path) -> Path:
+    """Locates transforms.json in the root or the app's private/ export layout."""
+    for candidate in (capture_dir / "transforms.json", capture_dir / "private" / "transforms.json"):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Missing transforms.json in {capture_dir}")
+
+
+def _resolve_frame_path(capture_dir: Path, base_dir: Path, rel: str) -> Path:
+    """Frame paths are relative to the transforms.json location in new export
+    layouts (private/), and to the capture root in older captures."""
+    candidate = base_dir / rel
+    if candidate.exists():
+        return candidate
+    return capture_dir / rel
+
+
+def load_depth_image(path: Path) -> Image.Image:
+    """Reads a 16-bit depth PNG, tolerating the app's historical export bug:
+    RawPNGWriter wrapped IDAT with raw DEFLATE instead of a zlib stream, which
+    standard PNG decoders (PIL, Rust image, macOS Preview) refuse. Falls back
+    to a manual chunk decode for those files."""
+    try:
+        img = Image.open(path)
+        img.load()
+        return img
+    except Exception:
+        pass
+
+    data = path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError(f"Not a PNG file: {path}")
+    pos, width, height, idat = 8, None, None, b""
+    while pos + 8 <= len(data):
+        length, ctype = struct.unpack(">I4s", data[pos:pos + 8])
+        payload = data[pos + 8:pos + 8 + length]
+        if ctype == b"IHDR":
+            width, height = struct.unpack(">II", payload[:8])
+        elif ctype == b"IDAT":
+            idat += payload
+        elif ctype == b"IEND":
+            break
+        pos += 12 + length
+    if not width or not height:
+        raise ValueError(f"Malformed PNG header in {path}")
+    try:
+        raw = zlib.decompress(idat)
+    except zlib.error:
+        raw = zlib.decompress(idat, -15)  # raw deflate stream
+    stride = 1 + width * 2
+    if len(raw) != height * stride:
+        raise ValueError(f"Unexpected depth payload size in {path}: {len(raw)}")
+    rows = np.frombuffer(raw, dtype=np.uint8).reshape(height, stride)
+    if (rows[:, 0] != 0).any():
+        raise ValueError(f"Unsupported PNG row filters in {path}")
+    # 16-bit grayscale pixels are big-endian, filter type None on every row.
+    pixels = rows[:, 1:].reshape(height, width, 2).view(">u2").reshape(height, width).astype(np.uint16)
+    return Image.fromarray(pixels)
+
+
+def _find_pointcloud(capture_dir: Path) -> Path:
+    """Locates pointcloud.ply at the capture root or under private/."""
+    for candidate in (
+        capture_dir / "pointcloud.ply",
+        capture_dir / "private" / "pointcloud.ply",
+        capture_dir / "pointcloud_cleaned.ply",
+        capture_dir / "private" / "pointcloud_cleaned.ply",
+    ):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Missing pointcloud.ply in {capture_dir}")
+
 
 def run_tsdf_fusion(
     capture_dir: str | Path,
@@ -22,10 +98,9 @@ def run_tsdf_fusion(
     Produces high-quality colored meshes (PLY, OBJ, GLB).
     """
     capture_dir = Path(capture_dir)
-    transforms_path = capture_dir / "transforms.json"
-    if not transforms_path.exists():
-        raise FileNotFoundError(f"Missing transforms.json in {capture_dir}")
-
+    transforms_path = _find_transforms(capture_dir)
+    # Frame entries are relative to the directory containing transforms.json
+    base_dir = transforms_path.parent
     with open(transforms_path, "r") as f:
         data = json.load(f)
 
@@ -87,13 +162,13 @@ def run_tsdf_fusion(
         if not rgb_rel or not depth_rel:
             continue
 
-        rgb_path = capture_dir / rgb_rel
-        depth_path = capture_dir / depth_rel
+        rgb_path = _resolve_frame_path(capture_dir, base_dir, rgb_rel)
+        depth_path = _resolve_frame_path(capture_dir, base_dir, depth_rel)
         if not rgb_path.exists() or not depth_path.exists():
             continue
 
         rgb_img = Image.open(rgb_path).convert("RGB")
-        depth_img = Image.open(depth_path)
+        depth_img = load_depth_image(depth_path)
 
         depth_w, depth_h = depth_img.size
         rgb_resized = rgb_img.resize((depth_w, depth_h), Image.Resampling.BILINEAR)
@@ -186,9 +261,9 @@ def run_poisson_reconstruction(
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> dict:
     capture_dir = Path(capture_dir)
-    pcd_path = capture_dir / "pointcloud.ply"
-    if not pcd_path.exists():
-        raise FileNotFoundError(f"Missing pointcloud.ply in {capture_dir}")
+    pcd_path = _find_pointcloud(capture_dir)
+    if progress_callback:
+        progress_callback(0.05, f"Using point cloud: {pcd_path.relative_to(capture_dir)}")
 
     if progress_callback:
         progress_callback(0.1, "Loading point cloud...")
@@ -254,11 +329,10 @@ def run_pointcloud_cleanup(
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> dict:
     capture_dir = Path(capture_dir)
-    pcd_path = capture_dir / "pointcloud.ply"
-    if not pcd_path.exists():
-        raise FileNotFoundError(f"Missing pointcloud.ply in {capture_dir}")
+    pcd_path = _find_pointcloud(capture_dir)
 
     if progress_callback:
+        progress_callback(0.05, f"Using point cloud: {pcd_path.relative_to(capture_dir)}")
         progress_callback(0.1, "Reading pointcloud.ply...")
 
     pcd = o3d.io.read_point_cloud(str(pcd_path))

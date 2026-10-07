@@ -72,9 +72,15 @@ async def run_brush_training(
     if target_ply.exists():
         target_ply.unlink()
 
+    # Brush reads transforms.json from the dataset directory root. Newer app
+    # exports keep it under private/, so train against that directory there.
+    dataset_dir = capture_dir
+    if not (capture_dir / "transforms.json").exists() and (capture_dir / "private" / "transforms.json").exists():
+        dataset_dir = capture_dir / "private"
+
     cmd = [
         str(brush_bin),
-        str(capture_dir),
+        str(dataset_dir),
         "--total-steps", str(total_steps),
         "--max-splats", str(max_splats),
         "--max-resolution", str(max_resolution),
@@ -170,10 +176,17 @@ async def run_colab_cli_training(
         log_callback(f"Compressing capture {capture_dir}...")
 
     zip_path = capture_dir / "capture_for_colab.zip"
+    # Only ship what training consumes: transforms + images + depth + point
+    # cloud. Confidence maps, meshes, and COLMAP exports bloat the upload
+    # without helping the trainer.
+    skip_dirs = {"splats", "confidence", "mesh", "colmap"}
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
         for file in capture_dir.rglob("*"):
-            if file.is_file() and not file.name.endswith(".zip") and "splats" not in file.parts:
-                zipf.write(file, file.relative_to(capture_dir))
+            if not file.is_file() or file.suffix.lower() == ".zip":
+                continue
+            if skip_dirs.intersection(file.relative_to(capture_dir).parts):
+                continue
+            zipf.write(file, file.relative_to(capture_dir))
 
     try:
         # 2. Provision Colab T4 VM
@@ -182,7 +195,10 @@ async def run_colab_cli_training(
         if log_callback:
             log_callback(f"Running: colab new -s {session_name} --gpu T4")
 
-        res = subprocess.run(
+        # Run the CLI in a worker thread: these calls block for minutes and
+        # must never stall the asyncio event loop serving the API.
+        res = await asyncio.to_thread(
+            subprocess.run,
             [colab_bin, "new", "-s", session_name, "--gpu", "T4"],
             capture_output=True,
             text=True,
@@ -199,7 +215,8 @@ async def run_colab_cli_training(
         if log_callback:
             log_callback(f"Uploading {zip_path.name} to Colab session...")
 
-        res = subprocess.run(
+        res = await asyncio.to_thread(
+            subprocess.run,
             [colab_bin, "upload", "-s", session_name, str(zip_path), "/content/capture.zip"],
             capture_output=True,
             text=True,
@@ -215,7 +232,7 @@ async def run_colab_cli_training(
             log_callback("Unpacking dataset and starting CUDA splat training on Colab...")
 
         remote_script = f"""
-import os, shutil, zipfile, subprocess, urllib.request
+import os, glob, shutil, zipfile, subprocess, urllib.request
 
 print("Locating uploaded capture.zip...")
 archive_candidates = ["capture.zip", "/content/capture.zip", os.path.expanduser("~/capture.zip")]
@@ -249,7 +266,12 @@ try:
     subprocess.run(["tar", "-xf", "brush.tar.xz"], check=True)
     os.chmod("brush-app-x86_64-unknown-linux-gnu/brush_app", 0o755)
     print("Starting splat training...")
-    cmd = ["brush-app-x86_64-unknown-linux-gnu/brush_app", "dataset", "--total-steps", "{total_steps}", "--max-splats", "600000", "--max-resolution", "1280", "--export-every", "{total_steps}", "--export-path", "/content/splats", "--export-name", "trained_splat.ply"]
+    # Brush reads transforms.json from the dataset root. Newer app exports
+    # nest it under private/, so point Brush at the directory holding it.
+    tf_candidates = glob.glob("/content/dataset/**/transforms.json", recursive=True)
+    brush_dataset = os.path.dirname(tf_candidates[0]) if tf_candidates else "/content/dataset"
+    print("Brush dataset directory:", brush_dataset, flush=True)
+    cmd = ["brush-app-x86_64-unknown-linux-gnu/brush_app", brush_dataset, "--total-steps", "{total_steps}", "--max-splats", "600000", "--max-resolution", "1280", "--export-every", "{total_steps}", "--export-path", "/content/splats", "--export-name", "trained_splat.ply"]
     training = subprocess.run(cmd, capture_output=True, text=True)
 except Exception as exc:
     print("Brush setup/run failed:", repr(exc), flush=True)
@@ -371,7 +393,8 @@ else:
 
         download_errors = []
         for remote_ply in ("splats/trained_splat.ply", "/content/splats/trained_splat.ply"):
-            res = subprocess.run(
+            res = await asyncio.to_thread(
+                subprocess.run,
                 [colab_bin, "download", "-s", session_name, remote_ply, str(local_ply)],
                 capture_output=True,
                 text=True,
@@ -401,7 +424,10 @@ else:
         if log_callback:
             log_callback(f"Stopping Colab session {session_name}...")
         try:
-            subprocess.run([colab_bin, "stop", "-s", session_name], capture_output=True, timeout=30)
+            await asyncio.to_thread(
+                subprocess.run, [colab_bin, "stop", "-s", session_name],
+                capture_output=True, timeout=30,
+            )
         except Exception:
             pass
         if zip_path.exists():
